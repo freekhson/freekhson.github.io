@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<title>Life</title>
+</head>
+
+<body>
+
+	<h1>
+		Platform devices and device trees
+	</h1>
+	<h2>26 May, 2018</h2>
+	<pre>
+		-----------------
+		이 문서는 제가 한국인이 이해하기 쉽게 문장을 조금 수정했습니다. 특히 *표시
+		본 문서의 저작권은 Creative Commons CC BY-SA 4.0 license 인데, 만약 문제가 된다면 메일 주십시오!
+		-----------------
+
+		두개의 기사 중 첫번째는, 찾을수 없는(non-discoverable) (*하드웨어가 바로 인식하는게 아님) 디바이스를 다루는 커널의 매커니즘에 대해서 설명한다 : platform devices.
+		Platform device 원리는 오래되었고 아주 자주 사용되지만 몇가지 단점이 존재하는데, 가장 큰 문제는 코드에서 디바이스를 초기화 해야한다는 것이다.
+		몇가지 대안이 있기는 하다; 이 기사에서는 어떻게 platform device들이 device tree와 사용되는지 다룬다.
+
+		최근 platform device 매커니즘은 상대적으로 개발자들이 새로운 시스템(*하드웨어 시스템)에 리눅스를 올리는 것이 쉽다.
+		단지 부트타임에 최신의 디바이스들에 대한 설명서(descriptions)를 만드는 것만 하면된다.
+		하지만 불행히도, 이러한 접근 방법은 모든 종류의 컴퓨터에 대한 "board files"을 써야하는 것이다.
+		이렇게 되면 커널은 하나의 board file에 맞게 올라가고 다른 종류의 시스템에는 작동하지 않는다.
+		Board file 방식은 임베디드 시스템의 종류가 별로 없다면 잘 작동할 수도있다.
+		문제는 현재 Linux-based 임베디드 시스템은 엄청많고, board file에 의존하는 아키텍쳐들은(특히, ARM) 전체적인 균형이 무너지게 된다.
+
+		이런 문제를 해결 하는 방법이 "device tree"이다;
+		본질적으로, 디바이스 트리는 text로 된 하드웨어 설명서이다.
+		디바이스 트리는 boot time 커널에 넘겨진다; 커널은 이것을 읽고 어떤 시스템(*어떤 하드웨어)위에서 작동하는지 알게된다.
+		다행히도, 디바이스트리는 여러 시스템들의 차이점을 잘 추상화하여 일반적이 커널이 더 많은 하드웨어에서 잘 작동하게 한다.
+
+		이 기사는 디바이스 트리 형식에 대한 좋은 출발점이며 현실의 시스템에 어떻게 사용되는지 설명한다.
+		이 주제에 관심이 있는 누구든 읽어도 좋다.
+		
+		It is possible for platform devices to work on a device-tree-enabled system with no extra work at all, especially once Grant Likely's improvements are merged. 
+		If the device tree includes a platform device (where such devices, in the device tree context, are those which are direct children of the root or are attached to a "simple bus"), that device will be instantiated and matched against a driver. 
+		The memory-mapped I/O and interrupt resources will be marshalled from the device tree description and made available to the device's probe() function in the usual way.
+		The driver need not know that the device was instantiated out of a device tree rather than from a hard-coded platform device definition.
+		
+		Life is not always quite that simple, though. Device names appearing in the device tree (in the "compatible" property) tend to take a standardized form which does not necessarily match the name given to the driver in the Linux kernel; among other things, device trees really are meant to work with more than one operating system. So it may be desirable to attach specific names to a platform device for use with device trees. The kernel provides an of_device_id structure which can be used for this purpose:
+		
+			static const struct of_device_id my_of_ids[] = {
+			{ .compatible = "long,funky-device-tree-name" },
+			{ }
+			};
+		
+		When the platform driver is declared, it stores a pointer to this table in the driver substructure:
+		
+			static struct platform_driver my_driver = {
+			/* ... */
+			.driver	= {
+				.name = "my-driver",
+				.of_match_table = my_of_ids
+			 }
+			};
+		
+		The driver can also declare the ID table as a device table to enable autoloading of the module as the device tree is instantiated:
+		
+			MODULE_DEVICE_TABLE(of, my_of_ids);
+		
+		The one other thing capable of complicating the situation is platform data. Needless to say, the device tree code is unaware of the specific structure used by a given driver for its platform data, so it will be unable to provide that information in that form. On the other hand, the device tree mechanism is equipped to allow the passing of just about any information that the driver may need to know. Making use of that information will require the driver to become a bit more aware of the device tree subsystem, though.
+		
+		Drivers expecting platform data should check the dev.platform_data pointer in the usual way. If there is a non-null value there, the driver has been instantiated in the traditional way and device tree does not enter into the picture; the platform data should be used in the usual way. If, however, the driver has been instantiated from the device tree code, the platform_data pointer will be null, indicating that the information must be acquired from the device tree directly.
+		
+		In this case, the driver will find a device_node pointer in the platform devices dev.of_node field. The various device tree access functions (of_get_property(), primarily) can then be used to extract the needed information from the device tree. After that, it's business as usual.
+		
+		In summary: making platform drivers work with device trees is a relatively straightforward task. It is mostly a matter of getting the right names in place so that the binding between a device tree node and the driver can be made, with a bit of additional work required in cases where platform data is in use. The nice result is that the static platform_device declarations can go away, along with the board files that contain them. That should, eventually, allow the removal of a bunch of boilerplate code from the kernel while simultaneously making the kernel more flexible.
+
+	</pre>
+
+
+</body>
+
+</html>
