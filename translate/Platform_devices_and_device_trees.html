@@ -3,7 +3,7 @@
 
 <head>
 	<meta charset="utf-8">
-	<title>Life</title>
+	<title>Linux</title>
 </head>
 
 <body>
@@ -15,7 +15,7 @@
 	<pre>
 		-----------------
 		이 문서는 제가 한국인이 이해하기 쉽게 문장을 조금 수정했습니다. 특히 *표시
-		본 문서의 저작권은 Creative Commons CC BY-SA 4.0 license 인데, 만약 문제가 된다면 메일 주십시오!
+		원문의 저작권은 Creative Commons CC BY-SA 4.0 license 인데, 만약 문제가 된다면 메일 주십시오!
 		-----------------
 
 		두개의 기사 중 첫번째는, 찾을수 없는(non-discoverable) (*하드웨어가 바로 인식하는게 아님) 디바이스를 다루는 커널의 매커니즘에 대해서 설명한다 : platform devices.
@@ -37,19 +37,23 @@
 		이 기사는 디바이스 트리 형식에 대한 좋은 출발점이며 현실의 시스템에 어떻게 사용되는지 설명한다.
 		이 주제에 관심이 있는 누구든 읽어도 좋다.
 		
-		It is possible for platform devices to work on a device-tree-enabled system with no extra work at all, especially once Grant Likely's improvements are merged. 
-		If the device tree includes a platform device (where such devices, in the device tree context, are those which are direct children of the root or are attached to a "simple bus"), that device will be instantiated and matched against a driver. 
-		The memory-mapped I/O and interrupt resources will be marshalled from the device tree description and made available to the device's probe() function in the usual way.
-		The driver need not know that the device was instantiated out of a device tree rather than from a hard-coded platform device definition.
-		
-		Life is not always quite that simple, though. Device names appearing in the device tree (in the "compatible" property) tend to take a standardized form which does not necessarily match the name given to the driver in the Linux kernel; among other things, device trees really are meant to work with more than one operating system. So it may be desirable to attach specific names to a platform device for use with device trees. The kernel provides an of_device_id structure which can be used for this purpose:
+		platform device들은 디바이스 트리 사용 시스템에 추가 작업없이 올리는 것이 가능하다, 특히 Grant Likely 의 기여가 merge(* 코드 upload) 됐다.
+		만약 디바이스 트리가 platform device(루트에 들어가는 "simple bus"를 사용하는 디바이스들 (*Device tree 문법을 보면 루트(/) 는 노드 최상단이며 cpu의 버스주소를 쓴다. )) 를 포함하면, 그 디바이스는 매치되는 드라이버에 등록될 것이다.
+		Memory-mapped I/O 와 인터럽트 정보들은 디바이스 트리 설명서에 들어가며, 일반적으로 디바이스들의 probe() (*) 함수를 가능하게 한다.
+		드라이버 입자엥서는 하드 코딩된 platform device 인지 디바이스 트리에 정의된건지 알필요가 없다.
+
+		하지만 삶이란게 항상 단순하지는 않다. 
+		디바이스 이름이 디바이스 트리에 나타다면("compatible 속성을 통해")서 tend to take a standardized form which does not necessarily match the name given to the driver in the Linux kernel; 
+		다른것들 속에서, 디바이스 트리는 하나 이상의 운영체제와 일할 수 있다.
+		그래서 디바이스 트리에서 사용되는 platform device에 아주 정확한 이름이 사용되어야 한다.
+		이러한 목적을 위해 커널은 of_device_id라는 구조를 사용한다:
 		
 			static const struct of_device_id my_of_ids[] = {
 			{ .compatible = "long,funky-device-tree-name" },
 			{ }
 			};
 		
-		When the platform driver is declared, it stores a pointer to this table in the driver substructure:
+		platform driver가 정의되면, driver substructure에 포인터를 저장한다.
 		
 			static struct platform_driver my_driver = {
 			/* ... */
@@ -59,17 +63,30 @@
 			 }
 			};
 		
+		또 driver는 디바이스 트리가 생성될때 모듈을 autoloading하기 위한 디바이스 테이블로써 ID table 에도 선언된다.(* 뭔가 번역하기 어려운데..?)
 		The driver can also declare the ID table as a device table to enable autoloading of the module as the device tree is instantiated:
 		
 			MODULE_DEVICE_TABLE(of, my_of_ids);
 		
-		The one other thing capable of complicating the situation is platform data. Needless to say, the device tree code is unaware of the specific structure used by a given driver for its platform data, so it will be unable to provide that information in that form. On the other hand, the device tree mechanism is equipped to allow the passing of just about any information that the driver may need to know. Making use of that information will require the driver to become a bit more aware of the device tree subsystem, though.
+		다른 어려운 상황 하나는 platform data이다.
+		말할 필요도 없이, 디바이스 트리 코드는 platform data를 위해 특정 구조에 사용되어지는 드라이버를 알지 못하여, 그 형식에 맞는 정보를 제공하지 못한다.
+		한편, 디바이스 트리 매커니즘은 드라이버가 필요한 어떤 정보를 넘기는 것이 가능하다.
+		하지만 그 드라이버가 필요로 하는 정보를 사용하게 만드는 것은 디바이스 서브시스템에서 조금 더 알게한다.(* 몬소리야..)
 		
-		Drivers expecting platform data should check the dev.platform_data pointer in the usual way. If there is a non-null value there, the driver has been instantiated in the traditional way and device tree does not enter into the picture; the platform data should be used in the usual way. If, however, the driver has been instantiated from the device tree code, the platform_data pointer will be null, indicating that the information must be acquired from the device tree directly.
-		
-		In this case, the driver will find a device_node pointer in the platform devices dev.of_node field. The various device tree access functions (of_get_property(), primarily) can then be used to extract the needed information from the device tree. After that, it's business as usual.
-		
-		In summary: making platform drivers work with device trees is a relatively straightforward task. It is mostly a matter of getting the right names in place so that the binding between a device tree node and the driver can be made, with a bit of additional work required in cases where platform data is in use. The nice result is that the static platform_device declarations can go away, along with the board files that contain them. That should, eventually, allow the removal of a bunch of boilerplate code from the kernel while simultaneously making the kernel more flexible.
+		드라이버는 platform data가 dev(* linux dev)에서 확인되어지길 기대한다.
+		platform_data 포인터가 그것이다.
+		만약 non-null 값이 들어가있으면, 드라이버는 전통적인 방법으로 생성되어지며(* 첫번째 기사 방식) 이바이스 트리는 이 방식에 포함되지 않는다;
+		platform data는 보통 있어야한다.
+		하지만 만약 드라이버가 디바이스 트리에서 생성되어진다면, platform_data는 null이여야하고, 정보들은 디바이스 트리에서 꼭 정의되어야 한다.
+
+		이런 방법은, 드라이버는 device_node 포인터를 platform device dev.of_node 필드값으로 찾는다.
+		다양한 디바이스 트리는 (of_get_property(), primarily)함수에 접근하여 디바이스 트리에서 필요한 정보를 가져온다.
+		그 후 정해진 다음 스텝으로 넘어간다.
+
+		요약하자면 : 플랫폼 드라이버는 디바이스 트리와 상대적으로 쉽게 사용된다.
+		거의 디바이스 트리 노드와 드라이버에 올바른 이름을 올바른 위치에 바인딩하고, platform data가 사용되는 경우에만 추가 작업을 하면 된다.
+		좋은 결과는 board file 에서 static platform_device(*hard coding되는 것) 정의가 사라지는 것이다.
+		마침내, 커널에서 불필요한 코드들을 제거하고 동시에 더 유연하게 만든다.
 
 	</pre>
 

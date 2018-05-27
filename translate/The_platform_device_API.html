@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<title>Linux</title>
+</head>
+
+<body>
+
+	<h1>
+		The platform device API
+	</h1>
+	<h2>26 May, 2018</h2>
+	<pre>
+		-----------------
+		이 문서는 제가 한국인이 이해하기 쉽게 문장을 조금 수정했습니다. 특히 *표시
+		원문의 저작권은 Creative Commons CC BY-SA 4.0 license 인데, 만약 문제가 된다면 메일 주십시오!
+		-----------------
+
+		초창기, 리눅스 유저들은 하드웨어 시스템을 사용 전 커널에게 특정 디바이스가 있다고 알려주었다.
+
+		이러한 정보 없이는 드라이버는 디바이스의 I/O 포트나 인터럽트 라인을 알수가 없었다.
+		다행히, 지금은 PCI같은 것들은 알아서 찾아지게 되었다; (*나도 정확한 원리는 모름..)
+		PCI버스에 있는 디바이스는 자신이 어떤 종류인지, 어떤 자원을 가지고 있는지 시스템에 알려줄 수 있다.
+		그래서 커널은 부트타임에 디바이스들을 인식하고 바로 사용할 수 있게 만든다.
+
+		아, 근데 삶이란게 그렇게 쉽지만은 않다;
+		여전히 엄청나게 많은 디바이스들은 CPU가 자동인식하지 못한다.
+		임베디드 혹은 system-on-chip 세계에서는, 자동인식 불가한 디바이스들이 점점 늘고있다.
+		그래서 현재 하드웨어가 어떻게 되어있는지 커널에 알려주어야한다.
+		"Platform devices" 는 오랫동안 이 역할을 해왔다.
+		이 기사는 platform device의 활용을 알아볼 것이다;
+		이후 오는 디바이스 트리에 관한 기사에 필요한 배경지식이 될 것이다.
+
+		Platform drivers
+
+		platform device는 struct platform_device 에서 선언되고, <linux/platform_device.h> 에서 찾을 수 있다.
+		이런 디바이스들은 가상의 "platform bus"에 연결된다;
+		platform device들의 드라이버는 반드시 platform bus 코드에 등록되어야만 한다.
+		platform_driver structure 는:
+
+		struct platform_driver {
+			int (*probe)(struct platform_device *);
+			int (*remove)(struct platform_device *);
+			void (*shutdown)(struct platform_device *);
+			int (*suspend)(struct platform_device *, pm_message_t state);
+			int (*resume)(struct platform_device *);
+			struct device_driver driver;
+			const struct platform_device_id *id_table;
+		};
+		
+		최소한 the probe() and remove() 콜백(*대응 되는 함수)은 등록해야한다;
+		다른 콜백들은 파워 관리나 관련있는 정보에 사용되어 진다.
+
+		드라이버가 꼭 제공해야하는 다른 것은 디바이스가 어떻게 바인딩 되는지 bus code에 심어야한다;
+		두가지 방법이 존재한다. 
+		첫번째는 id_table argument;
+		관련된 구조체는 :
+
+	   	struct platform_device_id {
+			char name[PLATFORM_NAME_SIZE];
+			kernel_ulong_t driver_data;
+		};
+		
+		만약 ID table이 있다면, platform bus code는 새로운 platform device를 위한 드라이버를 찾기위해 계속 탐색한다.
+		만약 디바이스의 이름과 ID table 명단의 이름이 일치하면, 디바이스는 드라이버 관리가 맡겨진다;
+		매칭되는 ID table의 명단은 드라이버를 매핑한다.
+		하지만 이러한 일이 일어날때 대부분의 platform driver는 ID table을 제공하지 않는다;
+		단순히 driver field 에 이름을 쓴다.
+		예를들어, i2c-gpio 드라이버는 2개의 GPIO라인을 2개의 i2c버스에 연결한다;
+		이것은 platform device에 올린다:
+
+		    static struct platform_driver i2c_gpio_driver = {
+			.driver		= {
+				.name	= "i2c-gpio",
+				.owner	= THIS_MODULE,
+			},
+			.probe		= i2c_gpio_probe,
+			.remove		= __devexit_p(i2c_gpio_remove),
+		    };
+
+		이 설정과 함께, "i2c-gpio"라고 명명되는 디바이스는 이 드라이버에 연결된다; ID table은 필요하지 않다.
+
+		Platform driver들은 커널에 자신을 이런 방식으로 알린다.
+
+		int platform_driver_register(struct platform_driver *driver);
+
+		호출이 성공하면, 디바이스는 드라이버 probe() 함수를 호출 할 수있다.
+		그 함수는 argument로 platfrom_device가 가르키는 생성되어야 하는 디바이스를 갖는다. (* 번역투 지리구요..)
+		That function gets as an argument a platform_device pointer describing the device to be instantiated:
+
+		    struct platform_device {
+			const char	*name;
+			int		id;
+			struct device	dev;
+			u32		num_resources;
+			struct resource	*resource;
+			const struct platform_device_id	*id_entry;
+			/* Others omitted */
+			};
+		
+		dev structure(* linux dev) 는 필요한 곳에 사용된다 - 예를들면 DMA mapping API.
+		만약 디바이스와 ID table 명단이 일치하면, id_entry는 특정 엔트리를 가르킨다.
+		resource array 는 다양한 resource들이 memory-mapped I/O 레지서터와 인터럽트가 어떻게 되어있는지 알수 있다.
+		여러 함수들이 resource array를 돕는다. 
+		몇가지를 보면:
+
+	    struct resource *platform_get_resource(struct platform_device *pdev, 
+						   unsigned int type, unsigned int n);
+	    struct resource *platform_get_resource_byname(struct platform_device *pdev,
+						   unsigned int type, const char *name);
+	    int platform_get_irq(struct platform_device *pdev, unsigned int n);
+
+The "n" parameter says which resource of that type is desired, with zero indicating the first one. Thus, for example, a driver could find its second MMIO region with:
+
+    r = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+
+Assuming the probe() function finds the information it needs, it should verify the device's existence to the extent possible, register the "real" devices associated with the platform device, and return zero.
+
+Platform devices
+
+So now we have a driver for a platform device, but no actual devices yet. As was noted at the beginning, platform devices are inherently not discoverable, so there must be another way to tell the kernel about their existence. That is typically done with the creation of a static platform_device structure providing, at a minimum, a name which is used to find the associated driver. So, for example, a simple (fictional) device might be set up this way:
+
+    static struct resource foomatic_resources[] = {
+	{
+		.start	= 0x10000000,
+		.end	= 0x10001000,
+		.flags	= IORESOURCE_MEM,
+		.name	= "io-memory"
+	},
+	{
+		.start	= 20,
+		.end	= 20,
+		.flags	= IORESOURCE_IRQ,
+		.name	= "irq",
+	}
+    };
+
+    static struct platform_device my_foomatic = {
+	.name 		= "foomatic",
+	.resource	= foomatic_resources,
+	.num_resources	= ARRAY_SIZE(foomatic_resources),
+    };
+
+These declarations describe a "foomatic" device with a one-page MMIO region starting at 0x10000000 and using IRQ 20. The device is made known to the system with:
+
+    int platform_device_register(struct platform_device *pdev);
+
+Once both a platform device and an associated driver have been registered, the driver's probe() function will be called and the device will be instantiated. Registration of device and driver are usually done in different places and can happen in either order. A call to platform_device_unregister() can be used to remove a platform device.
+
+Platform data
+
+The above information is adequate to instantiate a simple platform device, but many devices are more complex than that. Even the simple i2c-gpio driver described above needs two additional pieces of information: the numbers of the GPIO lines to be used as i2c clock and data lines. The mechanism used to pass this information is called "platform data"; in short, one defines a structure containing the specific information needed and passes it in the platform device's dev.platform_data field.
+
+With the i2c-gpio example, a full configuration looks like this:
+
+    #include <linux/i2c-gpio.h>
+
+    static struct i2c_gpio_platform_data my_i2c_plat_data = {
+	.scl_pin	= 100,
+	.sda_pin	= 101,
+    };
+
+    static struct platform_device my_gpio_i2c = {
+	.name		= "i2c-gpio",
+	.id		= 0,
+	.dev = {
+		.platform_data = &my_i2c_plat_data,
+	}
+    };
+
+When the driver's probe() function is called, it can fetch the platform_data pointer and use it to obtain the rest of the information it needs.
+
+Not everybody in the kernel community is enamored with platform devices; they seem like a bit of a hack used to encode information about specific hardware platforms into the kernel. Additionally, the platform data mechanism lacks any sort of type checking; drivers must simply assume that they have been passed a structure of the expected type. Even so, platform devices are heavily used, and that's unlikely to change, though the means by which they are created and discovered is changing. The way of the future appears to be device trees, which will be described in the following article.
+	</pre>
+
+
+</body>
+
+</html>
